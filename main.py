@@ -29,38 +29,52 @@ class TicketView(discord.ui.View):
         guild = interaction.guild
         user = interaction.user
         
-        # Nazwa kanału (np. ticket-jan-kowalski)
-        channel_name = f"ticket-{user.name.lower()}"
+        # Nazwa kanału
+        channel_name = f"ticket-{user.name.lower().replace(' ', '-')}"
         
-        # Sprawdzanie czy użytkownik już ma bilet (żeby nie spamował)
+        # Sprawdzanie czy bilet istnieje
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
-            return await interaction.response.send_message(f"⚠️ Masz już otwarte zgłoszenie tutaj: {existing_channel.mention}", ephemeral=True)
+            # Informacja o istniejącym kanale (ta może zostać ukryta, żeby nie robić spamu)
+            return await interaction.response.send_message(f"⚠️ Masz już bilet: {existing_channel.mention}", ephemeral=True)
 
-        await interaction.response.send_message("⏳ Tworzę Twoje zgłoszenie...", ephemeral=True)
+        # 1. Wysyłamy informację na kanale (widoczną dla wszystkich, ale zaraz zniknie)
+        # Musimy użyć followups, bo chcemy mieć obiekt wiadomości do usunięcia
+        await interaction.response.defer() # Bot "myśli..."
+        msg = await interaction.followup.send(f"⏳ {user.mention}, tworzę Twoje zgłoszenie...", ephemeral=False)
+        
+        # Usuwamy tę wiadomość po 5 sekundach
+        await msg.delete(delay=5)
 
-        # Znajdź lub stwórz kategorię
+        # 2. Tworzenie kategorii i kanału
         category = discord.utils.get(guild.categories, name="TICKETY")
         if not category:
             category = await guild.create_category("TICKETY")
 
-        # USTAWIENIA UPRAWNIEŃ KANAŁU:
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False), # Nikt nie widzi
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True), # Użytkownik widzi i pisze
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True) # Bot widzi i pisze
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
 
-        # Tworzenie kanału - BOT ROBI TO SWOIMI UPRAWNIENIAMI
         new_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
         
+        # 3. Wysyłamy "Okienko" (Embed) w nowym kanale
         embed = discord.Embed(
-            title="Witaj w zgłoszeniu!",
-            description=f"Cześć {user.mention}! Opisz swój problem, a administracja odpowie tak szybko, jak to możliwe.",
+            title="🎫 Zgłoszenie: " + user.name,
+            description=(
+                f"Witaj {user.mention} w swoim zgłoszeniu!\n\n"
+                "**Jak możesz nam pomóc?**\n"
+                "1. Opisz dokładnie swój problem.\n"
+                "2. Załącz zrzuty ekranu, jeśli je masz.\n"
+                "3. Poczekaj cierpliwie na odpowiedź administracji."
+            ),
             color=discord.Color.green()
         )
-        await new_channel.send(embed=embed)
-
+        embed.set_thumbnail(url=user.display_avatar.url) # Miniaturka z awatarem użytkownika
+        embed.set_footer(text="ID Użytkownika: " + str(user.id))
+        
+        await new_channel.send(content=f"{user.mention}", embed=embed)
 # --- KONFIGURACJA BOTA ---
 intents = discord.Intents.default()
 intents.message_content = True
