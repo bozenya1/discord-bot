@@ -7,9 +7,15 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
 
-# Pobieranie listy serwerów z licencją
+# Pobieranie i pancerne przetwarzanie listy serwerów
 raw_servers = os.getenv('PAID_SERVERS', '')
-PAID_SERVERS = [int(s) for s in raw_servers.split(',') if s.strip()]
+
+try:
+    # Czyścimy ID ze spacji, cudzysłowów i zamieniamy na liczby
+    PAID_SERVERS = [int(s.strip().replace('"', '').replace("'", "")) for s in raw_servers.split(',') if s.strip()]
+except ValueError:
+    print("❌ BŁĄD: Jeden z ID w PAID_SERVERS w pliku .env nie jest poprawną liczbą!")
+    PAID_SERVERS = []
 
 # --- KLASA PRZYCISKU (UI) ---
 class TicketView(discord.ui.View):
@@ -18,7 +24,7 @@ class TicketView(discord.ui.View):
 
     @discord.ui.button(label="Otwórz zgłoszenie", style=discord.ButtonStyle.primary, emoji="📩", custom_id="open_ticket_btn")
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # Na razie tylko potwierdzenie, że działa
+        # Na razie tylko potwierdzenie działającego przycisku
         await interaction.response.send_message(f"Cześć {interaction.user.mention}! Twoje zgłoszenie jest tworzone...", ephemeral=True)
 
 # --- KONFIGURACJA BOTA ---
@@ -30,7 +36,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 async def on_ready():
     print(f'---')
     print(f'✅ Bot online: {bot.user.name}')
-    print(f'💳 Aktywne licencje (ID): {PAID_SERVERS}')
+    print(f'💳 Wczytane licencje z .env: {PAID_SERVERS}')
     print(f'---')
     # Rejestrujemy widok przycisku, żeby działał po restarcie bota
     bot.add_view(TicketView())
@@ -40,9 +46,12 @@ async def on_ready():
 async def setup(ctx):
     """Komenda konfigurująca system ticketów u klienta"""
     
-    # 1. Sprawdzenie licencji (zabezpieczenie przed oszustami)
+    # DEBUG: Wyświetla w terminalu ID serwera, na którym wpisano komendę
+    print(f"DEBUG: Próba użycia !setup na serwerze ID: {ctx.guild.id}")
+    
+    # 1. Sprawdzenie licencji
     if ctx.guild.id not in PAID_SERVERS:
-        await ctx.send("❌ **Błąd licencji:** Ten serwer nie posiada aktywnej subskrypcji. Skontaktuj się z autorem bota.")
+        await ctx.send(f"❌ **Brak licencji!**\nTwoje ID serwera (`{ctx.guild.id}`) nie znajduje się na liście opłaconych.")
         return
 
     # 2. Tworzenie kategorii
