@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands
 import os
+import asyncio
 from dotenv import load_dotenv
 
 # --- KONFIGURACJA Z .ENV ---
@@ -19,62 +20,73 @@ except ValueError:
     PAID_SERVERS = []
     OWNER_ID = 0
 
-# --- KLASA PRZYCISKU (UI) ---
+# --- KLASA PRZYCISKU ZAMYKANIA (Wewnątrz Ticketa) ---
+class TicketCloseView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # Przycisk trwały
+
+    @discord.ui.button(label="Zamknij zgłoszenie", style=discord.ButtonStyle.danger, emoji="🔒", custom_id="close_ticket_btn")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # Potwierdzenie zamknięcia
+        await interaction.response.send_message("🔒 Zgłoszenie zostanie usunięte za 5 sekund...")
+        
+        # Odliczanie 5 sekund i usunięcie kanału
+        await asyncio.sleep(5)
+        await interaction.channel.delete()
+
+# --- KLASA PRZYCISKU OTWIERANIA (Główny Panel) ---
 class TicketView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None) # Przycisk trwały
 
     @discord.ui.button(label="Otwórz zgłoszenie", style=discord.ButtonStyle.primary, emoji="📩", custom_id="open_ticket_btn")
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         guild = interaction.guild
         user = interaction.user
         
-        # Nazwa kanału
+        # Nazwa kanału (zamiana spacji na myślniki)
         channel_name = f"ticket-{user.name.lower().replace(' ', '-')}"
         
-        # Sprawdzanie czy bilet istnieje
+        # Sprawdzanie czy bilet już istnieje
         existing_channel = discord.utils.get(guild.channels, name=channel_name)
         if existing_channel:
-            # Informacja o istniejącym kanale (ta może zostać ukryta, żeby nie robić spamu)
             return await interaction.response.send_message(f"⚠️ Masz już bilet: {existing_channel.mention}", ephemeral=True)
 
-        # 1. Wysyłamy informację na kanale (widoczną dla wszystkich, ale zaraz zniknie)
-        # Musimy użyć followups, bo chcemy mieć obiekt wiadomości do usunięcia
-        await interaction.response.defer() # Bot "myśli..."
+        # 1. Informacja o tworzeniu (zniknie po 5 sekundach)
+        await interaction.response.defer() 
         msg = await interaction.followup.send(f"⏳ {user.mention}, tworzę Twoje zgłoszenie...", ephemeral=False)
-        
-        # Usuwamy tę wiadomość po 5 sekundach
         await msg.delete(delay=5)
 
-        # 2. Tworzenie kategorii i kanału
+        # 2. Kategorie
         category = discord.utils.get(guild.categories, name="TICKETY")
         if not category:
             category = await guild.create_category("TICKETY")
 
+        # 3. Uprawnienia (widzi tylko autor i bot)
         overwrites = {
             guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True, embed_links=True),
             guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
 
+        # 4. Tworzenie kanału
         new_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
         
-        # 3. Wysyłamy "Okienko" (Embed) w nowym kanale
+        # 5. Okienko powitalne w nowym kanale z przyciskiem ZAMKNIJ
         embed = discord.Embed(
             title="🎫 Zgłoszenie: " + user.name,
             description=(
-                f"Witaj {user.mention} w swoim zgłoszeniu!\n\n"
-                "**Jak możesz nam pomóc?**\n"
-                "1. Opisz dokładnie swój problem.\n"
-                "2. Załącz zrzuty ekranu, jeśli je masz.\n"
-                "3. Poczekaj cierpliwie na odpowiedź administracji."
+                f"Witaj {user.mention}!\n\n"
+                "Opisz swój problem poniżej. Możesz załączyć zdjęcia.\n"
+                "Gdy sprawa zostanie rozwiązana, użyj przycisku poniżej."
             ),
             color=discord.Color.green()
         )
-        embed.set_thumbnail(url=user.display_avatar.url) # Miniaturka z awatarem użytkownika
-        embed.set_footer(text="ID Użytkownika: " + str(user.id))
+        embed.set_thumbnail(url=user.display_avatar.url)
+        embed.set_footer(text=f"ID: {user.id}")
         
-        await new_channel.send(content=f"{user.mention}", embed=embed)
+        await new_channel.send(content=f"{user.mention}", embed=embed, view=TicketCloseView())
+
 # --- KONFIGURACJA BOTA ---
 intents = discord.Intents.default()
 intents.message_content = True
@@ -87,19 +99,22 @@ async def on_ready():
     print(f'💳 Licencje: {PAID_SERVERS}')
     print(f'👑 Właściciel: {OWNER_ID}')
     print(f'---')
+    
+    # Rejestracja widoków, aby przyciski działały po restarcie
     bot.add_view(TicketView())
+    bot.add_view(TicketCloseView())
 
 @bot.command()
 async def setup(ctx):
-    """Komenda dostępna tylko dla właściciela bota lub osób z licencją"""
+    """Komenda konfigurująca panel"""
     
-    # 1. Sprawdzenie licencji serwera
+    # Sprawdzenie licencji
     if int(ctx.guild.id) not in PAID_SERVERS:
-        return await ctx.send("❌ Ten serwer nie ma wykupionej licencji.")
+        return await ctx.send("❌ Ten serwer nie posiada aktywnej licencji.")
 
-    # 2. Sprawdzenie uprawnień (Tylko Ty jako Owner lub Admin serwera może to odpalić)
+    # Sprawdzenie uprawnień
     if ctx.author.id != OWNER_ID and not ctx.author.guild_permissions.administrator:
-        return await ctx.send("❌ Nie masz uprawnień do konfiguracji panelu (musisz być właścicielem bota lub adminem serwera).")
+        return await ctx.send("❌ Brak uprawnień do użycia tej komendy.")
 
     category = discord.utils.get(ctx.guild.categories, name="TICKETY")
     if not category:
@@ -107,19 +122,31 @@ async def setup(ctx):
 
     channel = discord.utils.get(category.text_channels, name="pomoc-ticket")
     if channel:
-        return await ctx.send(f"⚠️ Panel już istnieje: {channel.mention}")
+        return await ctx.send(f"⚠️ Panel już istnieje na kanale {channel.mention}")
 
     channel = await ctx.guild.create_text_channel("pomoc-ticket", category=category)
 
     embed = discord.Embed(
         title="📩 Centrum Pomocy",
-        description="Kliknij przycisk poniżej, aby otworzyć bilet.",
+        description="Kliknij przycisk poniżej, aby otworzyć nowe zgłoszenie.",
         color=discord.Color.blue()
     )
     
     await channel.send(embed=embed, view=TicketView())
-    await ctx.send(f"✅ Skonfigurowano system!")
+    await ctx.send(f"✅ System ticketów został poprawnie skonfigurowany!")
+
+@bot.command()
+async def wylacz(ctx):
+    """Wyłączanie bota"""
+    if ctx.author.id == OWNER_ID:
+        await ctx.send("🔌 Wyłączanie...")
+        await bot.close()
+    else:
+        await ctx.send("❌ Tylko właściciel może to zrobić.")
 
 # --- START ---
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    if TOKEN:
+        bot.run(TOKEN)
+    else:
+        print("❌ BŁĄD: Brak DISCORD_TOKEN w pliku .env!")
