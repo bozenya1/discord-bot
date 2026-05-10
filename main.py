@@ -11,7 +11,7 @@ TOKEN = os.getenv('DISCORD_TOKEN')
 raw_servers = os.getenv('PAID_SERVERS', '')
 
 try:
-    # Czyścimy ID ze spacji, cudzysłowów i zamieniamy na liczby
+    # Czyścimy ID ze spacji, cudzysłowów i zamieniamy na liczby (int)
     PAID_SERVERS = [int(s.strip().replace('"', '').replace("'", "")) for s in raw_servers.split(',') if s.strip()]
 except ValueError:
     print("❌ BŁĄD: Jeden z ID w PAID_SERVERS w pliku .env nie jest poprawną liczbą!")
@@ -49,22 +49,28 @@ async def setup(ctx):
     # DEBUG: Wyświetla w terminalu ID serwera, na którym wpisano komendę
     print(f"DEBUG: Próba użycia !setup na serwerze ID: {ctx.guild.id}")
     
-    # 1. Sprawdzenie licencji
-    if ctx.guild.id not in PAID_SERVERS:
+    # 1. Sprawdzenie licencji (wymuszamy int dla pewności)
+    if int(ctx.guild.id) not in PAID_SERVERS:
         await ctx.send(f"❌ **Brak licencji!**\nTwoje ID serwera (`{ctx.guild.id}`) nie znajduje się na liście opłaconych.")
         return
 
-    # 2. Tworzenie kategorii
+    # 2. Zarządzanie kategorią
     category = discord.utils.get(ctx.guild.categories, name="TICKETY")
     if not category:
         category = await ctx.guild.create_category("TICKETY")
 
-    # 3. Tworzenie kanału pod panel
-    channel = discord.utils.get(ctx.guild.text_channels, name="pomoc-ticket")
-    if not channel:
-        channel = await ctx.guild.create_text_channel("pomoc-ticket", category=category)
+    # 3. Zarządzanie kanałem - ZABEZPIECZENIE PRZED DUBLOWANIEM
+    # Szukamy kanału o tej nazwie W KONKRETNEJ kategorii
+    channel = discord.utils.get(category.text_channels, name="pomoc-ticket")
+    
+    if channel:
+        await ctx.send(f"⚠️ System jest już skonfigurowany na kanale {channel.mention}. Jeśli chcesz go zresetować, usuń ten kanał i wpisz komendę ponownie.")
+        return
 
-    # 4. Tworzenie i wysyłanie Embedu z PRZYCISKIEM
+    # 4. Tworzenie kanału (tylko jeśli nie istnieje)
+    channel = await ctx.guild.create_text_channel("pomoc-ticket", category=category)
+
+    # 5. Tworzenie i wysyłanie Embedu z PRZYCISKIEM
     embed = discord.Embed(
         title="📩 Centrum Pomocy i Ticketów",
         description=(
@@ -82,7 +88,9 @@ async def setup(ctx):
 @bot.command()
 async def wylacz(ctx):
     """Bezpieczne wyłączenie bota przez właściciela"""
-    owner_id = int(os.getenv('OWNER_ID', 0))
+    raw_owner = os.getenv('OWNER_ID', '0')
+    owner_id = int(raw_owner.strip().replace('"', '').replace("'", ""))
+    
     if ctx.author.id == owner_id:
         await ctx.send("🔌 Wyłączanie bota...")
         await bot.close()
