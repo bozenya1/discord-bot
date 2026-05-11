@@ -35,6 +35,14 @@ class TicketView(discord.ui.View):
 
     @discord.ui.button(label="Otwórz zgłoszenie", style=discord.ButtonStyle.primary, emoji="📩", custom_id="open_ticket_btn")
     async def open_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # --- BLOKADA PRZYCISKU (CHECK LICENCJI) ---
+        if interaction.guild_id not in PAID_SERVERS:
+            return await interaction.response.send_message(
+                "❌ Ten serwer nie posiada już aktywnej licencji. Skontaktuj się z administracją.", 
+                ephemeral=True
+            )
+        # --- KONIEC BLOKADY ---
+
         guild = interaction.guild
         user = interaction.user
         channel_name = f"ticket-{user.name.lower().replace(' ', '-')}"
@@ -44,17 +52,23 @@ class TicketView(discord.ui.View):
             return await interaction.response.send_message(f"⚠️ Masz już bilet: {existing_channel.mention}", ephemeral=True)
 
         await interaction.response.defer()
-        new_channel = await guild.create_text_channel(
-            channel_name, 
-            overwrites={
-                guild.default_role: discord.PermissionOverwrite(read_messages=False),
-                user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-                guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-            }
-        )
         
-        embed = discord.Embed(title="🎫 Zgłoszenie", description=f"Witaj {user.mention}!", color=discord.Color.green())
-        await new_channel.send(embed=embed, view=TicketCloseView())
+        category = discord.utils.get(guild.categories, name="TICKETY") or await guild.create_category("TICKETY")
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            user: discord.PermissionOverwrite(read_messages=True, send_messages=True, attach_files=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+
+        new_channel = await guild.create_text_channel(channel_name, category=category, overwrites=overwrites)
+        
+        embed = discord.Embed(
+            title="🎫 Zgłoszenie",
+            description=f"Witaj {user.mention}! Opisz swój problem.\nAdministracja zaraz się Tobą zajmie.",
+            color=discord.Color.green()
+        )
+        await new_channel.send(content=f"{user.mention}", embed=embed, view=TicketCloseView())
 
 # --- KONFIGURACJA BOTA ---
 intents = discord.Intents.default()
